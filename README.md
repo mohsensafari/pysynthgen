@@ -1,14 +1,14 @@
-# synthgen
+# pysynthgen
 
 Template-driven synthetic data generation engine.
 
-`synthgen` takes a validated JSON template describing a dataset and yields synthetic
+`pysynthgen` takes a validated JSON template describing a dataset and yields synthetic
 rows as an `Iterator[dict]`. It is **fully decoupled from Airflow** — a separate
 Airflow 3 operator (built later) is a thin wrapper around this engine.
 
 ## Design
 
-- **Engine is standalone.** The `synthgen` package has zero Airflow imports. It
+- **Engine is standalone.** The `pysynthgen` package has zero Airflow imports. It
   takes a validated template and returns an iterator of rows. Airflow integration
   lives outside this package.
 - **Templates are validated with Pydantic**, not raw dict parsing. Each field type
@@ -72,7 +72,7 @@ for that field on a given row.
 ## Usage
 
 ```python
-from synthgen import load_and_validate_template, SynthEngine, build_sink
+from pysynthgen import load_and_validate_template, SynthEngine, build_sink
 
 spec = load_and_validate_template("template.json")
 engine = SynthEngine(spec)
@@ -95,10 +95,10 @@ path = sink.finalize()
 Command line:
 
 ```bash
-python -m synthgen template.json                     # validate + echo the normalized spec
-python -m synthgen template.json --rows 20           # print 20 sample rows as JSON
-python -m synthgen template.json --out data.parquet  # generate full dataset to a file
-python -m synthgen template.json --out data --format avro
+python -m pysynthgen template.json                     # validate + echo the normalized spec
+python -m pysynthgen template.json --rows 20           # print 20 sample rows as JSON
+python -m pysynthgen template.json --out data.parquet  # generate full dataset to a file
+python -m pysynthgen template.json --out data --format avro
 ```
 
 ## Sinks
@@ -111,12 +111,12 @@ selects one by name.
 |--------|-----------|------------|
 | `json` | `.json` | stdlib (streamed JSON array) |
 | `csv` | `.csv` | stdlib (`delimiter`/`quotechar` configurable) |
-| `parquet` | `.parquet`, `.pq` | `pyarrow` — `synthgen[parquet]` |
-| `avro` | `.avro` | `fastavro` — `synthgen[avro]` |
+| `parquet` | `.parquet`, `.pq` | `pyarrow` — `pysynthgen[parquet]` |
+| `avro` | `.avro` | `fastavro` — `pysynthgen[avro]` |
 
 Notes: parquet/avro infer their schema from the first batch with all columns
 nullable; avro writes naive datetimes as UTC so output is deterministic across
-machines. Install both format deps with `synthgen[all]`.
+machines. Install both format deps with `pysynthgen[all]`.
 
 ## Benchmarks
 

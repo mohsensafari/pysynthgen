@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import IO, Any
 
-from synthgen.sinks.base import BaseSink, Row
+from pysynthgen.sinks.base import BaseSink, Row
 
 
 def _avro_type(value: Any) -> Any:
@@ -59,14 +59,14 @@ def _avro_row(row: Row) -> Row:
 
 class AvroSink(BaseSink):
     """Writes rows as an Avro container file. Requires ``fastavro`` — install
-    ``synthgen[avro]``."""
+    ``pysynthgen[avro]``."""
 
     def __init__(self, path: str | Path) -> None:
         try:
             from fastavro.write import Writer
         except ImportError as exc:  # pragma: no cover - exercised via install extras
             raise ImportError(
-                "AvroSink requires 'fastavro'. Install it with: pip install synthgen[avro]"
+                "AvroSink requires 'fastavro'. Install it with: pip install pysynthgen[avro]"
             ) from exc
         self.path = Path(path)
         self._Writer = Writer

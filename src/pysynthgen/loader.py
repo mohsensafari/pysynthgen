@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from synthgen.schema import TemplateSpec
+from pysynthgen.schema import TemplateSpec
 
 
 class TemplateError(ValueError):

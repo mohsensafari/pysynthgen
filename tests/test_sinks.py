@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from synthgen import SynthEngine, load_and_validate_template
-from synthgen.sinks import build_sink, format_from_path
+from pysynthgen import SynthEngine, load_and_validate_template
+from pysynthgen.sinks import build_sink, format_from_path
 
 
 def _rows(null_field: bool = False) -> list[dict]:

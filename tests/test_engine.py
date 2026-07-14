@@ -8,8 +8,8 @@ from datetime import date, datetime
 
 import pytest
 
-from synthgen import SynthEngine, load_and_validate_template
-from synthgen.engine import GenerationError
+from pysynthgen import SynthEngine, load_and_validate_template
+from pysynthgen.engine import GenerationError
 
 
 def _engine(template: dict) -> SynthEngine:
@@ -286,7 +286,7 @@ def test_iter_batches_rejects_bad_size() -> None:
 
 def test_no_airflow_import_reachable() -> None:
     # The engine must stay Airflow-agnostic.
-    import synthgen  # noqa: F401
+    import pysynthgen  # noqa: F401
 
     assert "airflow" not in sys_modules_names()
 

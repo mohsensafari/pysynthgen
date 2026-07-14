@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from synthgen.sinks.base import BaseSink, Row
+from pysynthgen.sinks.base import BaseSink, Row
 
 
 class ParquetSink(BaseSink):
@@ -14,7 +14,7 @@ class ParquetSink(BaseSink):
     The Arrow schema is inferred from the first batch and reused for the rest, so
     later batches are cast to that schema (every column is nullable, so
     ``null_probability`` fields work). Requires ``pyarrow`` — install
-    ``synthgen[parquet]``.
+    ``pysynthgen[parquet]``.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -23,7 +23,7 @@ class ParquetSink(BaseSink):
             import pyarrow.parquet as pq
         except ImportError as exc:  # pragma: no cover - exercised via install extras
             raise ImportError(
-                "ParquetSink requires 'pyarrow'. Install it with: pip install synthgen[parquet]"
+                "ParquetSink requires 'pyarrow'. Install it with: pip install pysynthgen[parquet]"
             ) from exc
         self.path = Path(path)
         self._pa = pa

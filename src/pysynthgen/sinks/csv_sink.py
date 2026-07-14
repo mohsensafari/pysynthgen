@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import IO, Any
 
-from synthgen.sinks.base import BaseSink, Row
+from pysynthgen.sinks.base import BaseSink, Row
 
 
 def _csv_value(value: Any) -> Any:

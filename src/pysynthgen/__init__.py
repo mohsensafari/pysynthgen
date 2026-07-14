@@ -1,13 +1,13 @@
-"""synthgen — template-driven synthetic data generation engine.
+"""pysynthgen — template-driven synthetic data generation engine.
 
 Public API. The generation engine is added on top of this validated-template layer.
 """
 
 from __future__ import annotations
 
-from synthgen.engine import GenerationError, SynthEngine
-from synthgen.loader import TemplateError, load_and_validate_template
-from synthgen.schema import (
+from pysynthgen.engine import GenerationError, SynthEngine
+from pysynthgen.loader import TemplateError, load_and_validate_template
+from pysynthgen.schema import (
     CategoryField,
     ConstraintSpec,
     DateField,
@@ -22,7 +22,7 @@ from synthgen.schema import (
     UniqueConstraint,
     UUIDField,
 )
-from synthgen.sinks import BaseSink, build_sink
+from pysynthgen.sinks import BaseSink, build_sink
 
 __all__ = [
     "load_and_validate_template",

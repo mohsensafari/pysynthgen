@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from synthgen import TemplateSpec, load_and_validate_template
-from synthgen.loader import TemplateError
+from pysynthgen import TemplateSpec, load_and_validate_template
+from pysynthgen.loader import TemplateError
 
 
 def _valid_template() -> dict:

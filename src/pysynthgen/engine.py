@@ -10,8 +10,8 @@ import numpy as np
 from faker import Faker
 from rstr import Rstr
 
-from synthgen.generators import BaseGenerator, RandomBundle, Row, build_generator
-from synthgen.schema import TemplateSpec
+from pysynthgen.generators import BaseGenerator, RandomBundle, Row, build_generator
+from pysynthgen.schema import TemplateSpec
 
 
 class GenerationError(RuntimeError):

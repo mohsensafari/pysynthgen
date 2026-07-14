@@ -1,6 +1,6 @@
 """Value generators — one per field type — plus the plugin registry.
 
-Each generator turns a single :class:`~synthgen.schema._FieldBase` spec into values.
+Each generator turns a single :class:`~pysynthgen.schema._FieldBase` spec into values.
 Generators are looked up by their field's ``type`` string via :data:`REGISTRY`,
 which is the extension point: register a new type with the :func:`register`
 decorator and it becomes usable in templates with no engine changes.
@@ -22,7 +22,7 @@ import numpy as np
 from faker import Faker
 from rstr import Rstr
 
-from synthgen.schema import (
+from pysynthgen.schema import (
     CategoryField,
     DateField,
     DatetimeField,

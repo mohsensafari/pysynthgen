@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "synthgen"
+name = "pysynthgen"
 version = "0.1.0"
 description = "Template-driven synthetic data generation engine (Airflow-agnostic)."
 readme = "README.md"
@@ -51,10 +51,10 @@ Repository = "https://github.com/mohsensafari/synthgen"
 Issues = "https://github.com/mohsensafari/synthgen/issues"
 
 [project.scripts]
-synthgen = "synthgen.__main__:main"
+pysynthgen = "pysynthgen.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/synthgen"]
+packages = ["src/pysynthgen"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

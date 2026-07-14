@@ -14,7 +14,7 @@ bench = pytest.importorskip("bench_sinks")
 
 
 def test_wide_template_is_valid() -> None:
-    from synthgen import load_and_validate_template
+    from pysynthgen import load_and_validate_template
 
     spec = load_and_validate_template(bench.wide_template(10))
     assert spec.row_count == 10

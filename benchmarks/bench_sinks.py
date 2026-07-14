@@ -40,7 +40,7 @@ try:
 except ImportError:
     pass
 
-from synthgen import SynthEngine, build_sink, load_and_validate_template
+from pysynthgen import SynthEngine, build_sink, load_and_validate_template
 
 ALL_FORMATS = ["json", "csv", "parquet", "avro"]
 
@@ -191,7 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep", action="store_true", help="Keep generated files.")
     args = parser.parse_args(argv)
 
-    outdir = Path(args.outdir) if args.outdir else Path(tempfile.mkdtemp(prefix="synthgen-bench-"))
+    outdir = (
+        Path(args.outdir) if args.outdir
+        else Path(tempfile.mkdtemp(prefix="pysynthgen-bench-"))
+    )
     outdir.mkdir(parents=True, exist_ok=True)
     template = wide_template(args.rows)
 

@@ -11,11 +11,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from synthgen.sinks.avro_sink import AvroSink
-from synthgen.sinks.base import BaseSink, Row
-from synthgen.sinks.csv_sink import CsvSink
-from synthgen.sinks.json_sink import JsonSink
-from synthgen.sinks.parquet_sink import ParquetSink
+from pysynthgen.sinks.avro_sink import AvroSink
+from pysynthgen.sinks.base import BaseSink, Row
+from pysynthgen.sinks.csv_sink import CsvSink
+from pysynthgen.sinks.json_sink import JsonSink
+from pysynthgen.sinks.parquet_sink import ParquetSink
 
 # Factory callables: each takes a path plus format-specific keyword options.
 SINK_REGISTRY: dict[str, Callable[..., BaseSink]] = {

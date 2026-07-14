@@ -17,9 +17,9 @@ import sys
 from datetime import date, datetime
 from typing import Any
 
-from synthgen.engine import SynthEngine
-from synthgen.loader import TemplateError, load_and_validate_template
-from synthgen.sinks import SINK_REGISTRY, build_sink, format_from_path
+from pysynthgen.engine import SynthEngine
+from pysynthgen.loader import TemplateError, load_and_validate_template
+from pysynthgen.sinks import SINK_REGISTRY, build_sink, format_from_path
 
 
 def _json_default(value: Any) -> str:
@@ -31,7 +31,7 @@ def _json_default(value: Any) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="synthgen", description=__doc__)
+    parser = argparse.ArgumentParser(prog="pysynthgen", description=__doc__)
     parser.add_argument("template", help="Path to a JSON template file.")
     parser.add_argument(
         "--rows",
