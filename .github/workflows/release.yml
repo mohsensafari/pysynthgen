@@ -34,12 +34,10 @@ jobs:
 
       - name: Quality gate
         run: |
-          uv venv
           uv pip install -e ".[dev]"
-          source .venv/bin/activate
-          ruff check .
-          mypy src/pysynthgen benchmarks/bench_sinks.py
-          pytest -q
+          uv run --no-sync ruff check .
+          uv run --no-sync mypy src/pysynthgen benchmarks/bench_sinks.py
+          uv run --no-sync pytest -q
 
       - name: Semantic version, tag, changelog, GitHub Release
         id: release

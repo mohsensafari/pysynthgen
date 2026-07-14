@@ -26,19 +26,16 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        run: uv pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Type check
-        run: mypy src/pysynthgen benchmarks/bench_sinks.py
+        run: uv run --no-sync mypy src/pysynthgen benchmarks/bench_sinks.py
 
       - name: Test
-        run: pytest -q
+        run: uv run --no-sync pytest -q
 
   pr-title:
     # Ensure the PR title is a valid Conventional Commit, since squash-merge uses it
