@@ -75,6 +75,13 @@ plugins = ["pydantic.mypy"]
 module = ["pyarrow.*", "fastavro.*"]
 ignore_missing_imports = true
 
+# numpy's modern stubs use PEP 695 `type` statements that mypy only parses under a
+# 3.12+ target; skip following them so our 3.10 target stays valid.
+[[tool.mypy.overrides]]
+module = ["numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [[tool.mypy.overrides]]
 module = ["bench_sinks"]
 ignore_missing_imports = true
