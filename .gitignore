@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Build artifacts
+build/
+dist/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# uv
+uv.lock
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Benchmark output
+benchmarks/out/
+*.parquet
+*.avro

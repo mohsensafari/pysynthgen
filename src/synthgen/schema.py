@@ -1,0 +1,268 @@
+"""Pydantic models describing the synthetic-data template format.
+
+The template is the single source of truth for a generation run. Every field type
+is modelled as its own class so validation is *type-specific*: an ``int`` field
+cannot accidentally carry a Faker ``provider``, and a ``category`` field must have
+weights that line up with its values. The field models are combined into a
+discriminated union keyed on the ``type`` string, which is also the key the
+generator registry uses to resolve a generator for each field.
+
+Relationships / multi-table are intentionally out of scope for now, but the shape
+is designed to grow into them without a rewrite:
+
+* A template describes a single entity (one flat table). A future multi-table
+  format can wrap several of these as ``entities: {name: TemplateSpec}`` at a new
+  top level without changing the field models.
+* ``reference`` currently copies a value from an *earlier field in the same row*.
+  A cross-table foreign key later becomes the same type with an optional target
+  (e.g. ``entity``/``table``) added — existing intra-row references keep working.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date, datetime
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field, model_validator
+
+# --------------------------------------------------------------------------- #
+# Field specifications                                                        #
+# --------------------------------------------------------------------------- #
+
+
+class _FieldBase(BaseModel):
+    """Common attributes shared by every field type.
+
+    ``null_probability`` lives here so any field can be made nullable: on each row
+    the generator emits ``None`` with this probability instead of a value.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(..., min_length=1, description="Column name in the output row.")
+    null_probability: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Chance of emitting None for this field."
+    )
+
+
+class _StringFieldBase(_FieldBase):
+    """Base for fields that emit strings; supports an optional length cap.
+
+    ``max_length`` truncates the generated value to at most that many characters.
+    """
+
+    max_length: int | None = Field(
+        default=None, ge=1, description="Truncate the generated string to this many characters."
+    )
+
+
+class UUIDField(_FieldBase):
+    type: Literal["uuid"] = "uuid"
+
+
+class DateField(_FieldBase):
+    type: Literal["date"] = "date"
+    start: date
+    end: date
+
+    @model_validator(mode="after")
+    def _check_range(self) -> DateField:
+        if self.start > self.end:
+            raise ValueError(
+                f"date field {self.name!r}: start {self.start} is after end {self.end}"
+            )
+        return self
+
+
+class DatetimeField(_FieldBase):
+    type: Literal["datetime"] = "datetime"
+    start: datetime
+    end: datetime
+
+    @model_validator(mode="after")
+    def _check_range(self) -> DatetimeField:
+        if self.start > self.end:
+            raise ValueError(
+                f"datetime field {self.name!r}: start {self.start} is after end {self.end}"
+            )
+        return self
+
+
+class IntField(_FieldBase):
+    type: Literal["int"] = "int"
+    distribution: Literal["uniform", "normal"] = "uniform"
+    # uniform params
+    min: int | None = None
+    max: int | None = None
+    # normal params
+    mean: float | None = None
+    stddev: float | None = None
+
+    @model_validator(mode="after")
+    def _check_params(self) -> IntField:
+        if self.distribution == "uniform":
+            if self.min is None or self.max is None:
+                raise ValueError(f"int field {self.name!r}: uniform requires 'min' and 'max'")
+            if self.min > self.max:
+                raise ValueError(f"int field {self.name!r}: min {self.min} > max {self.max}")
+        else:  # normal
+            if self.mean is None or self.stddev is None:
+                raise ValueError(f"int field {self.name!r}: normal requires 'mean' and 'stddev'")
+            if self.stddev <= 0:
+                raise ValueError(f"int field {self.name!r}: stddev must be > 0")
+            if self.min is not None and self.max is not None and self.min > self.max:
+                raise ValueError(f"int field {self.name!r}: clamp min {self.min} > max {self.max}")
+        return self
+
+
+class FloatField(_FieldBase):
+    type: Literal["float"] = "float"
+    distribution: Literal["uniform", "normal"] = "uniform"
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    stddev: float | None = None
+
+    @model_validator(mode="after")
+    def _check_params(self) -> FloatField:
+        if self.distribution == "uniform":
+            if self.min is None or self.max is None:
+                raise ValueError(f"float field {self.name!r}: uniform requires 'min' and 'max'")
+            if self.min > self.max:
+                raise ValueError(f"float field {self.name!r}: min {self.min} > max {self.max}")
+        else:  # normal
+            if self.mean is None or self.stddev is None:
+                raise ValueError(f"float field {self.name!r}: normal requires 'mean' and 'stddev'")
+            if self.stddev <= 0:
+                raise ValueError(f"float field {self.name!r}: stddev must be > 0")
+        return self
+
+
+class CategoryField(_FieldBase):
+    type: Literal["category"] = "category"
+    values: list[str] = Field(..., min_length=1)
+    weights: list[float] | None = None
+
+    @model_validator(mode="after")
+    def _check_weights(self) -> CategoryField:
+        if self.weights is not None:
+            if len(self.weights) != len(self.values):
+                raise ValueError(
+                    f"category field {self.name!r}: {len(self.weights)} weights "
+                    f"for {len(self.values)} values"
+                )
+            if any(w < 0 for w in self.weights):
+                raise ValueError(f"category field {self.name!r}: weights must be non-negative")
+            total = sum(self.weights)
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"category field {self.name!r}: weights sum to {total}, expected 1.0"
+                )
+        return self
+
+
+class FakerField(_StringFieldBase):
+    type: Literal["faker"] = "faker"
+    provider: str = Field(..., min_length=1, description="Faker provider method, e.g. 'email'.")
+
+
+class RegexField(_StringFieldBase):
+    """Generates a string matching ``pattern`` (regex reversed into a value).
+
+    A ``max_length`` cap is applied after generation and may break the pattern
+    match; use it only when a hard length ceiling matters more than an exact match.
+    """
+
+    type: Literal["regex"] = "regex"
+    pattern: str = Field(..., min_length=1, description="Regular expression to satisfy.")
+
+    @model_validator(mode="after")
+    def _check_pattern(self) -> RegexField:
+        try:
+            re.compile(self.pattern)
+        except re.error as exc:
+            raise ValueError(f"regex field {self.name!r}: invalid pattern: {exc}") from exc
+        return self
+
+
+class ReferenceField(_FieldBase):
+    """Copies the value of an earlier field in the same row (intra-row FK).
+
+    A cross-table foreign key will later add an optional target field here; the
+    intra-row default keeps working unchanged.
+    """
+
+    type: Literal["reference"] = "reference"
+    field: str = Field(..., min_length=1, description="Name of an earlier field to reference.")
+
+
+FieldSpec = Annotated[
+    UUIDField
+    | DateField
+    | DatetimeField
+    | IntField
+    | FloatField
+    | CategoryField
+    | FakerField
+    | RegexField
+    | ReferenceField,
+    Field(discriminator="type"),
+]
+
+
+# --------------------------------------------------------------------------- #
+# Constraints                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class UniqueConstraint(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    type: Literal["unique"] = "unique"
+    fields: list[str] = Field(..., min_length=1)
+
+
+# Only one constraint type today. When a second is added this becomes a
+# discriminated union on "type", mirroring FieldSpec.
+ConstraintSpec = UniqueConstraint
+
+
+# --------------------------------------------------------------------------- #
+# Top-level template (single entity / flat table)                            #
+# --------------------------------------------------------------------------- #
+
+
+class TemplateSpec(BaseModel):
+    """A fully validated generation template for one flat table."""
+
+    model_config = {"extra": "forbid"}
+
+    row_count: int = Field(..., gt=0)
+    seed: int | None = None
+    fields: list[FieldSpec] = Field(..., min_length=1)
+    constraints: list[ConstraintSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_cross_field(self) -> TemplateSpec:
+        names = [f.name for f in self.fields]
+        dupes = {n for n in names if names.count(n) > 1}
+        if dupes:
+            raise ValueError(f"duplicate field names: {sorted(dupes)}")
+
+        # references must point at a field defined *earlier* in the list.
+        seen: set[str] = set()
+        for f in self.fields:
+            if isinstance(f, ReferenceField) and f.field not in seen:
+                raise ValueError(
+                    f"reference field {f.name!r} points to {f.field!r}, which is not "
+                    "defined earlier in 'fields'"
+                )
+            seen.add(f.name)
+
+        known = set(names)
+        for c in self.constraints:
+            unknown = [fld for fld in c.fields if fld not in known]
+            if unknown:
+                raise ValueError(f"{c.type} constraint references unknown fields: {unknown}")
+        return self
