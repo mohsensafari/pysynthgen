@@ -11,6 +11,8 @@ seed drives numeric draws, Faker, and regex generation alike.
 
 from __future__ import annotations
 
+import importlib
+import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -182,11 +184,61 @@ class FakerGenerator(BaseGenerator):
         return value
 
 
+# rstr clamps every repeat to a module-level cap (default 100), which crashes on a
+# fixed/bounded repeat larger than that (e.g. `{500}` -> randrange(500, 101)). We raise
+# the cap per pattern to cover its explicit bounds only, so unbounded quantifiers
+# (`+`, `*`) stay capped at the default and cannot blow up the output.
+_xeger_module: Any = importlib.import_module("rstr.xeger")
+_DEFAULT_STAR_PLUS_LIMIT: int = int(_xeger_module.STAR_PLUS_LIMIT)
+
+try:  # Python 3.11+
+    _sre_parser: Any = importlib.import_module("re._parser")
+    _sre_constants: Any = importlib.import_module("re._constants")
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    _sre_parser = importlib.import_module("sre_parse")
+    _sre_constants = importlib.import_module("sre_constants")
+
+
+def _max_explicit_repeat(pattern: str) -> int:
+    """Return the largest explicit repeat bound in ``pattern`` (0 if none).
+
+    Unbounded quantifiers report their finite side only (e.g. ``a{5,}`` -> 5), so
+    ``+``/``*`` on their own contribute nothing and keep the default cap.
+    """
+    try:
+        parsed = _sre_parser.parse(pattern)
+    except re.error:  # pragma: no cover - patterns are pre-validated by the schema
+        return 0
+    best = 0
+    stack: list[Any] = [parsed]
+    while stack:
+        for op, av in stack.pop():
+            if op in (_sre_constants.MAX_REPEAT, _sre_constants.MIN_REPEAT):
+                lo, hi, sub = av
+                if lo != _sre_constants.MAXREPEAT:
+                    best = max(best, lo)
+                if hi != _sre_constants.MAXREPEAT:
+                    best = max(best, hi)
+                stack.append(sub)
+            elif op == _sre_constants.SUBPATTERN:
+                stack.append(av[-1])
+            elif op == _sre_constants.BRANCH:
+                stack.extend(av[1])
+            elif op in (_sre_constants.ASSERT, _sre_constants.ASSERT_NOT):
+                stack.append(av[1])
+    return best
+
+
 @register("regex")
 class RegexGenerator(BaseGenerator):
     spec: RegexField
 
+    def __init__(self, spec: Any, rng: RandomBundle) -> None:
+        super().__init__(spec, rng)
+        self._star_plus_limit = max(_DEFAULT_STAR_PLUS_LIMIT, _max_explicit_repeat(spec.pattern))
+
     def generate(self, row: Row) -> str:
+        _xeger_module.STAR_PLUS_LIMIT = self._star_plus_limit
         value = self.rng.rstr.xeger(self.spec.pattern)
         if self.spec.max_length is not None:
             value = value[: self.spec.max_length]
