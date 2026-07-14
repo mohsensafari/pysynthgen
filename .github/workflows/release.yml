@@ -34,7 +34,9 @@ jobs:
 
       - name: Quality gate
         run: |
-          uv pip install --system -e ".[dev]"
+          uv venv
+          uv pip install -e ".[dev]"
+          source .venv/bin/activate
           ruff check .
           mypy src/pysynthgen benchmarks/bench_sinks.py
           pytest -q
