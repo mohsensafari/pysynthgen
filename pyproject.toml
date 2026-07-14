@@ -46,9 +46,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mohsensafari/synthgen"
-Repository = "https://github.com/mohsensafari/synthgen"
-Issues = "https://github.com/mohsensafari/synthgen/issues"
+Homepage = "https://github.com/mohsensafari/pysynthgen"
+Repository = "https://github.com/mohsensafari/pysynthgen"
+Issues = "https://github.com/mohsensafari/pysynthgen/issues"
 
 [project.scripts]
 pysynthgen = "pysynthgen.__main__:main"
