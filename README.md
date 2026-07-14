@@ -142,6 +142,13 @@ uv run ruff check .  # lint
 uv run mypy src      # types
 ```
 
+## Contributing & releases
+
+Development happens on short-lived branches merged into `main` via squash-merge, with
+[Conventional Commit](https://www.conventionalcommits.org/) PR titles. Merging to
+`main` runs an automated pipeline that computes the next semantic version, tags a
+release, and publishes to PyPI. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Status
 
 - ✅ Template schema + loader (Pydantic, validated)
