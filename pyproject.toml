@@ -45,6 +45,11 @@ dev = [
     "fastavro>=1.9",
 ]
 
+[project.urls]
+Homepage = "https://github.com/mohsensafari/synthgen"
+Repository = "https://github.com/mohsensafari/synthgen"
+Issues = "https://github.com/mohsensafari/synthgen/issues"
+
 [project.scripts]
 synthgen = "synthgen.__main__:main"
 
