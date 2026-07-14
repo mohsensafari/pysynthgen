@@ -208,6 +208,61 @@ def test_regex_matches_pattern() -> None:
         assert re.fullmatch(r"[A-Z]{3}-\d{4}", row["s"])
 
 
+def test_regex_large_fixed_repeat() -> None:
+    # Regression: fixed repeats > rstr's default cap (100) used to crash at generation.
+    import re
+
+    eng = _engine(
+        {
+            "row_count": 10,
+            "seed": 1,
+            "fields": [{"name": "blob", "type": "regex", "pattern": r"[a-z]{500}"}],
+        }
+    )
+    for row in eng.iter_rows():
+        assert len(row["blob"]) == 500
+        assert re.fullmatch(r"[a-z]{500}", row["blob"])
+
+
+def test_regex_large_bounded_repeat_in_range() -> None:
+    import re
+
+    eng = _engine(
+        {
+            "row_count": 50,
+            "seed": 2,
+            "fields": [{"name": "s", "type": "regex", "pattern": r"[0-9]{200,300}"}],
+        }
+    )
+    for row in eng.iter_rows():
+        assert 200 <= len(row["s"]) <= 300
+        assert re.fullmatch(r"[0-9]{200,300}", row["s"])
+
+
+def test_regex_unbounded_quantifier_stays_capped() -> None:
+    # A pattern with no large explicit bound keeps the default cap, so `+` cannot
+    # explode into an enormous string.
+    eng = _engine(
+        {
+            "row_count": 30,
+            "seed": 3,
+            "fields": [{"name": "s", "type": "regex", "pattern": r"a+"}],
+        }
+    )
+    assert all(0 < len(row["s"]) <= 100 for row in eng.iter_rows())
+
+
+def test_regex_large_repeat_is_reproducible() -> None:
+    tpl = {
+        "row_count": 20,
+        "seed": 9,
+        "fields": [{"name": "s", "type": "regex", "pattern": r"[a-z]{250}"}],
+    }
+    a = [r["s"] for r in _engine(tpl).iter_rows()]
+    b = [r["s"] for r in _engine(tpl).iter_rows()]
+    assert a == b
+
+
 def test_reference_copies_earlier_field() -> None:
     eng = _engine(
         {
