@@ -1,8 +1,8 @@
 """Output sinks and the format factory.
 
-``build_sink`` picks a sink by format string so callers (the CLI, the future
-Airflow operator) can stay format-agnostic. The parquet and avro sinks import
-their heavy dependencies lazily, so importing this package never requires them.
+``build_sink`` picks a sink by format string so callers (e.g. the CLI) can stay
+format-agnostic. The parquet and avro sinks import their heavy dependencies lazily,
+so importing this package never requires them.
 """
 
 from __future__ import annotations

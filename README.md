@@ -3,14 +3,13 @@
 Template-driven synthetic data generation engine.
 
 `pysynthgen` takes a validated JSON template describing a dataset and yields synthetic
-rows as an `Iterator[dict]`. It is **fully decoupled from Airflow** — a separate
-Airflow 3 operator (built later) is a thin wrapper around this engine.
+rows as an `Iterator[dict]`, writing them to a configurable sink (JSON, CSV, Parquet,
+or Avro).
 
 ## Design
 
-- **Engine is standalone.** The `pysynthgen` package has zero Airflow imports. It
-  takes a validated template and returns an iterator of rows. Airflow integration
-  lives outside this package.
+- **Engine is standalone and dependency-light.** It takes a validated template and
+  returns an iterator of rows; the heavy format dependencies are optional extras.
 - **Templates are validated with Pydantic**, not raw dict parsing. Each field type
   is its own model in a discriminated union keyed on `type`, so validation is
   type-specific and mistakes are caught up front.
@@ -18,8 +17,8 @@ Airflow 3 operator (built later) is a thin wrapper around this engine.
   drives all randomness (numeric, Faker, regex), so a run is byte-for-byte
   repeatable.
 - **Streaming = chunked generation.** The engine exposes `iter_rows()` and
-  `iter_batches(batch_size)`; the consumer (a sink, a file writer, the future
-  operator) decides how to persist batches.
+  `iter_batches(batch_size)`; the consumer (a sink or a file writer) decides how to
+  persist batches.
 - **Relationships are out of scope for now** but the schema is shaped to grow into
   multi-table generation without a rewrite (a future `entities: {name: template}`
   wrapper, and cross-table `reference` fields).
@@ -149,5 +148,4 @@ uv run mypy src      # types
 - ✅ Generation engine — generators + `SynthEngine`
 - ✅ File sinks — json, csv, parquet, avro
 - ⬜ More sinks (DB table, Kafka)
-- ⬜ Airflow 3 operator (thin wrapper, emits an `Asset`, uses `airflow.io`)
 - ⬜ Multi-table / linked-entity generation

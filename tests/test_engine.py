@@ -284,14 +284,16 @@ def test_iter_batches_rejects_bad_size() -> None:
         list(eng.iter_batches(batch_size=0))
 
 
-def test_no_airflow_import_reachable() -> None:
-    # The engine must stay Airflow-agnostic.
-    import pysynthgen  # noqa: F401
-
-    assert "airflow" not in sys_modules_names()
-
-
-def sys_modules_names() -> set[str]:
+def test_bare_import_does_not_load_optional_backends() -> None:
+    # Importing the package must not pull in the optional format backends; they are
+    # imported lazily only when their sink is built. Checked in a fresh interpreter
+    # so earlier tests that built those sinks cannot affect the result.
+    import subprocess
     import sys
 
-    return {name.split(".")[0] for name in sys.modules}
+    code = (
+        "import sys, pysynthgen; "
+        "assert 'pyarrow' not in sys.modules, 'pyarrow imported eagerly'; "
+        "assert 'fastavro' not in sys.modules, 'fastavro imported eagerly'"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
