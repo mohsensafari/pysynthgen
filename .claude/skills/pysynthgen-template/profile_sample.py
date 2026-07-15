@@ -21,6 +21,7 @@ import sys
 import uuid as uuidlib
 from collections import Counter
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from itertools import islice
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,19 @@ def is_null(v: Any) -> bool:
     return v is None or (isinstance(v, str) and v.strip() == "")
 
 
+def as_bool(v: Any) -> bool | None:
+    """Real bools, plus the true/false spellings a CSV round-trip leaves behind.
+
+    Deliberately does not accept 0/1 — those are indistinguishable from a genuine
+    int column.
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return {"true": True, "false": False}.get(v.strip().lower())
+    return None
+
+
 def as_number(v: Any) -> float | int | None:
     if isinstance(v, bool):
         return None
@@ -169,13 +183,17 @@ def infer_field(name: str, values: list[Any], n_total: int, max_categories: int)
 
     if all(is_uuid(v) for v in nonnull):
         field["type"] = "uuid"
-    elif all(isinstance(v, bool) for v in nonnull):
-        _fill_category(field, counter)
+    elif all(as_bool(v) is not None for v in nonnull):
+        _fill_bool(field, [as_bool(v) for v in nonnull])
+    elif (sequence := _as_sequence(name, nonnull, nulls)) is not None:
+        field.update(sequence)
     elif (temporal := _all_temporal(nonnull)) is not None:
         kind, lo, hi = temporal
         field["type"] = kind
         field["start"] = _fmt_temporal(kind, lo)
         field["end"] = _fmt_temporal(kind, hi)
+    elif (dec := _as_decimal(name, nonnull)) is not None:
+        field.update(dec)
     elif cardinality <= max_categories and cardinality <= max(1, len(nonnull) // 2):
         _fill_category(field, counter)
     elif all(as_number(v) is not None for v in nonnull):
@@ -200,6 +218,74 @@ def _all_temporal(values: list[Any]) -> tuple[str, datetime, datetime] | None:
 
 def _fmt_temporal(kind: str, dt: datetime) -> str:
     return dt.date().isoformat() if kind == "date" else dt.replace(microsecond=0).isoformat()
+
+
+MONEY_NAMES = (
+    "price", "amount", "cost", "total", "fee", "balance",
+    "salary", "revenue", "payment", "subtotal", "discount",
+)
+
+
+def _as_decimal(name: str, nonnull: list[Any]) -> dict[str, Any] | None:
+    """Map exact-decimal values, or a money-shaped column, to a `decimal` field.
+
+    A stored ``Decimal`` (a parquet/avro decimal column) is unambiguous — reading it
+    back as a float would throw away the exactness the source took care to keep.
+    Otherwise require a money-ish name: plenty of ordinary floats happen to carry
+    two decimal places without being money.
+    """
+    stored = all(isinstance(v, Decimal) for v in nonnull)
+    if not stored and not any(m in name.lower() for m in MONEY_NAMES):
+        return None
+    try:
+        values = [v if isinstance(v, Decimal) else Decimal(str(v).strip()) for v in nonnull]
+    except (InvalidOperation, ValueError):
+        return None
+    if not all(v.is_finite() for v in values):
+        return None
+
+    scale = max(max(-v.as_tuple().exponent, 0) for v in values)
+    if not stored and scale > 4:  # too many places to be money; likely a measure
+        return None
+    lo, hi = min(values), max(values)
+    int_digits = max(len(str(abs(v).to_integral_value())) for v in (lo, hi))
+    if int_digits + scale > 18:  # beyond what a decimal field may declare
+        return None
+    return {
+        "type": "decimal",
+        "precision": int_digits + scale,
+        "scale": scale,
+        "distribution": "uniform",
+        "min": float(lo),
+        "max": float(hi),
+    }
+
+
+def _fill_bool(field: dict[str, Any], nonnull: list[Any]) -> None:
+    share_true = sum(1 for v in nonnull if v) / len(nonnull)
+    field["type"] = "bool"
+    if abs(share_true - 0.5) > 0.02:  # near-even is the default; don't spell it out
+        field["true_probability"] = round(share_true, 3)
+
+
+def _as_sequence(name: str, nonnull: list[Any], nulls: int) -> dict[str, Any] | None:
+    """Detect an auto-increment key: all-int, no nulls, evenly spaced, ascending.
+
+    Only worth suggesting for an id-like column — an evenly spaced measure (a year,
+    a bucketed count) is a real distribution the caller probably wants to keep.
+    """
+    if nulls or len(nonnull) < 3:
+        return None
+    if not (name.lower() == "id" or name.lower().endswith(("_id", "_key", "_no", "_num"))):
+        return None
+    nums = [as_number(v) for v in nonnull]  # via as_number, so a CSV's strings count
+    if not all(isinstance(n, int) for n in nums):
+        return None
+    # strict=False: the offset copy is deliberately one shorter.
+    steps = {b - a for a, b in zip(nums, nums[1:], strict=False)}
+    if len(steps) != 1 or (step := steps.pop()) <= 0:
+        return None
+    return {"type": "sequence", "start": nums[0], "step": step}
 
 
 def _fill_category(field: dict[str, Any], counter: Counter) -> None:

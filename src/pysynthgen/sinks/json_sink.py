@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import IO, Any
 
@@ -13,6 +14,11 @@ from pysynthgen.sinks.base import BaseSink, Row
 def _json_default(value: Any) -> str:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    # JSON has no decimal type, and a JSON number is a float to almost every
+    # reader — which is the loss a decimal field exists to avoid. Emit the exact
+    # digits as a string instead.
+    if isinstance(value, Decimal):
+        return str(value)
     raise TypeError(f"cannot serialize {type(value).__name__} to JSON")
 
 

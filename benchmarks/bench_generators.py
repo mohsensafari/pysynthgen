@@ -27,6 +27,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
 import numpy as np
@@ -36,6 +37,12 @@ END = datetime(2026, 1, 1)
 SPAN = int((END - START).total_seconds())
 VALUES = ["US", "NL", "DE", "FR", "GB", "ES", "IT", "SE"]
 WEIGHTS = [0.30, 0.20, 0.15, 0.10, 0.08, 0.07, 0.06, 0.04]
+TRUE_P = 0.3
+QUANTUM = Decimal("0.01")
+
+
+def snap(value: float) -> Decimal:
+    return Decimal(str(value)).quantize(QUANTUM, rounding=ROUND_HALF_EVEN)
 
 Column = Callable[[np.random.Generator, int], list[Any]]
 
@@ -69,6 +76,14 @@ def perrow_datetime(rng: np.random.Generator, n: int) -> list[Any]:
     return [START + timedelta(seconds=int(rng.integers(0, SPAN + 1))) for _ in range(n)]
 
 
+def perrow_bool(rng: np.random.Generator, n: int) -> list[Any]:
+    return [bool(rng.random() < TRUE_P) for _ in range(n)]
+
+
+def perrow_decimal(rng: np.random.Generator, n: int) -> list[Any]:
+    return [snap(float(rng.uniform(0.0, 1000.0))) for _ in range(n)]
+
+
 # --------------------------------------------------------------------------- #
 # Vectorized generators (one draw per column)                                 #
 # --------------------------------------------------------------------------- #
@@ -99,9 +114,19 @@ def vec_datetime(rng: np.random.Generator, n: int) -> list[Any]:
     return [START + timedelta(seconds=o) for o in offsets]
 
 
+def vec_bool(rng: np.random.Generator, n: int) -> list[Any]:
+    return [bool(v) for v in (rng.random(n) < TRUE_P).tolist()]
+
+
+def vec_decimal(rng: np.random.Generator, n: int) -> list[Any]:
+    return [snap(v) for v in rng.uniform(0.0, 1000.0, size=n).tolist()]
+
+
 CASES: list[tuple[str, Column, Column]] = [
     ("int (uniform)", perrow_int, vec_int),
     ("float (normal+clamp)", perrow_float, vec_float),
+    ("decimal (uniform)", perrow_decimal, vec_decimal),
+    ("bool", perrow_bool, vec_bool),
     ("category (weighted)", perrow_category, vec_category),
     ("uuid", perrow_uuid, vec_uuid),
     ("datetime", perrow_datetime, vec_datetime),

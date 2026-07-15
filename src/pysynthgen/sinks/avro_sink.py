@@ -9,10 +9,23 @@ local timezone.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import IO, Any
 
 from pysynthgen.sinks.base import BaseSink, Row
+
+# Declared precision for decimal columns. The sink sees values, not the template,
+# so it cannot know the field's precision — but a bytes-backed Avro decimal stores
+# only the digits it needs, so declaring the maximum costs nothing on disk and
+# cannot overflow on a later batch.
+_DECIMAL_PRECISION = 38
+
+
+def _decimal_scale(value: Decimal) -> int:
+    exponent = value.as_tuple().exponent
+    # Only NaN/Infinity carry a non-int exponent, and no generator emits those.
+    return -exponent if isinstance(exponent, int) else 0
 
 
 def _avro_type(value: Any) -> Any:
@@ -23,6 +36,13 @@ def _avro_type(value: Any) -> Any:
         return "long"
     if isinstance(value, float):
         return "double"
+    if isinstance(value, Decimal):
+        return {
+            "type": "bytes",
+            "logicalType": "decimal",
+            "precision": _DECIMAL_PRECISION,
+            "scale": _decimal_scale(value),
+        }
     if isinstance(value, datetime):
         return {"type": "long", "logicalType": "timestamp-micros"}
     if isinstance(value, date):
