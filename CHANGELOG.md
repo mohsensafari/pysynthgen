@@ -1,6 +1,62 @@
 # CHANGELOG
 
 
+## v0.1.3 (2026-07-15)
+
+### Documentation
+
+- Add Claude skill for generating pysynthgen templates
+  ([#2](https://github.com/mohsensafari/pysynthgen/pull/2),
+  [`64001f1`](https://github.com/mohsensafari/pysynthgen/commit/64001f115586190473f96db2108020de9a0f169d))
+
+- Add developer skill with architecture, conventions, and release policy
+  ([#3](https://github.com/mohsensafari/pysynthgen/pull/3),
+  [`aa7ec5a`](https://github.com/mohsensafari/pysynthgen/commit/aa7ec5a347019eb6ec12fdf8306851cb834774c0))
+
+### Performance Improvements
+
+- Generate rows column-at-a-time instead of cell-by-cell
+  ([#4](https://github.com/mohsensafari/pysynthgen/pull/4),
+  [`87092d2`](https://github.com/mohsensafari/pysynthgen/commit/87092d2285b74d553a5bc97dff1805b18ad1577a))
+
+* chore: add per-row vs vectorized generator benchmark
+
+Quantifies the headroom in moving the engine from one-draw-per-cell to column-at-a-time (vectorized)
+  numpy draws, and asserts the batched draw is value-identical to the scalar draw per column.
+  Evidence for a follow-up engine change; no runtime code is touched.
+
+* perf: generate rows column-at-a-time instead of cell-by-cell
+
+The engine drew one value per cell — one numpy call per field per row — so numpy's per-call overhead
+  dominated a barely-there arithmetic cost. Generators now expose generate_column(), and the engine
+  builds each field's whole column in one vectorized draw per fixed-size chunk, then transposes into
+  row dicts. The five numpy/uuid-bound types (int, float, category, uuid, date/datetime) and
+  reference vectorize; faker/regex and any custom generator keep a per-row fallback that still sees
+  the partially-built row.
+
+~10x more rows/s on a mixed template (23k -> 245k/s). Peak memory stays flat: the chunk size is
+  fixed, independent of the caller's batch size, so output depends only on the seed and never on how
+  rows are consumed (iter_rows and iter_batches agree for any batch size). Uniqueness still
+  regenerates colliding rows per-row.
+
+The column-major draw order changes which values a given seed produces. Same-spec reproducibility is
+  unchanged; exact per-seed values differ from prior versions.
+
+* docs: add install/extras section and document column generation
+
+README gains an Installation section: pip install pysynthgen for the engine plus the stdlib json/csv
+  sinks, and the parquet/avro/all extras for the heavy backends, with a note that only what you
+  install gets imported. Verified against a clean venv, including the error a missing extra raises.
+
+Also brings the docs in line with column-at-a-time generation: the Design section now covers the
+  vectorized draw, the fixed generation chunk, and that output no longer depends on how rows are
+  consumed; the dev skill documents generate_column, the chunk-size invariant, and where nullability
+  now sits in the draw order.
+
+mypy in CI covered only bench_sinks.py, so the new benchmark went unchecked — widened to
+  benchmarks/, and README/skill now quote the command CI actually runs.
+
+
 ## v0.1.2 (2026-07-14)
 
 ### Bug Fixes
