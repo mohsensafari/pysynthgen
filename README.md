@@ -6,6 +6,31 @@ Template-driven synthetic data generation engine.
 rows as an `Iterator[dict]`, writing them to a configurable sink (JSON, CSV, Parquet,
 or Avro).
 
+## Installation
+
+```bash
+pip install pysynthgen
+```
+
+That gives you the engine and the JSON and CSV sinks, which need nothing beyond the
+standard library. Requires Python 3.10+.
+
+The Parquet and Avro sinks depend on `pyarrow` and `fastavro`, which are **not**
+installed by default — they are heavy, and most runs don't need them. Pick the extra
+for the formats you want:
+
+```bash
+pip install "pysynthgen[parquet]"   # + pyarrow, enables the parquet sink
+pip install "pysynthgen[avro]"      # + fastavro, enables the avro sink
+pip install "pysynthgen[all]"       # both
+```
+
+The quotes matter in zsh, which would otherwise treat the brackets as a glob.
+
+You only pay for what you install: `import pysynthgen` never imports pyarrow or
+fastavro, and each sink imports its backend lazily when you build it. Asking for a
+format whose extra is missing raises an error naming the extra to install.
+
 ## Design
 
 - **Engine is standalone and dependency-light.** It takes a validated template and
@@ -15,10 +40,16 @@ or Avro).
   type-specific and mistakes are caught up front.
 - **Generation is seeded and reproducible.** A single `seed` at the template level
   drives all randomness (numeric, Faker, regex), so a run is byte-for-byte
-  repeatable.
+  repeatable. Output depends only on the template and its seed — never on how you
+  consume it, so `iter_rows()` and `iter_batches(n)` agree for any `n`.
+- **Generation is vectorized.** Rows are built a column at a time: each field's
+  values are drawn for a whole chunk of rows in one numpy call, then transposed into
+  row dicts. Field types that can't vectorize (`faker`, `regex`) fall back to a
+  per-row draw.
 - **Streaming = chunked generation.** The engine exposes `iter_rows()` and
   `iter_batches(batch_size)`; the consumer (a sink or a file writer) decides how to
-  persist batches.
+  persist batches. The internal generation chunk is fixed, so peak memory stays flat
+  however large `row_count` gets.
 - **Relationships are out of scope for now** but the schema is shaped to grow into
   multi-table generation without a rewrite (a future `entities: {name: template}`
   wrapper, and cross-table `reference` fields).
@@ -142,6 +173,14 @@ python benchmarks/bench_sinks.py --rows 10000000        # full ~10M-row target (
 python benchmarks/bench_sinks.py --rows 1000000 --formats parquet avro --keep
 ```
 
+`benchmarks/bench_generators.py` measures the generator draw itself, comparing a
+per-row draw against the column-at-a-time draw the engine uses and checking the two
+agree value-for-value:
+
+```bash
+python benchmarks/bench_generators.py --rows 200000
+```
+
 ## Development
 
 This repo uses [`uv`](https://docs.astral.sh/uv/):
@@ -151,7 +190,7 @@ uv venv
 uv pip install -e ".[dev]"
 uv run pytest        # tests
 uv run ruff check .  # lint
-uv run mypy src      # types
+uv run mypy src/pysynthgen benchmarks/  # types (strict)
 ```
 
 ## Contributing & releases
