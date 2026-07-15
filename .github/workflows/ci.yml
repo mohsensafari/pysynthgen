@@ -32,7 +32,7 @@ jobs:
         run: uv run --no-sync ruff check .
 
       - name: Type check
-        run: uv run --no-sync mypy src/pysynthgen benchmarks/bench_sinks.py
+        run: uv run --no-sync mypy src/pysynthgen benchmarks/
 
       - name: Test
         run: uv run --no-sync pytest -q

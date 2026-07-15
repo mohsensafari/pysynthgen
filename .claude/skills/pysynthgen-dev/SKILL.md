@@ -22,15 +22,17 @@ src/pysynthgen/
   __init__.py     public API; __version__ read from installed metadata
   schema.py       Pydantic models: field types as a discriminated union + TemplateSpec
   loader.py       load_and_validate_template(dict | path | json-string) -> TemplateSpec
-  generators.py   BaseGenerator, RandomBundle, the @register REGISTRY, one gen per type
-  engine.py       SynthEngine (iter_rows / iter_batches), uniqueness, GenerationError
+  generators.py   BaseGenerator (generate / generate_column), RandomBundle, @register REGISTRY
+  engine.py       SynthEngine (iter_rows / iter_batches), column generation, uniqueness
   __main__.py     CLI: validate/echo, --rows sample, --out/--format/--batch-size
   sinks/
     base.py       BaseSink (write_batch, finalize, write), DEFAULT_BATCH_SIZE
     {json,csv,parquet,avro}_sink.py
     __init__.py   SINK_REGISTRY, build_sink(fmt, path), format_from_path(path)
 tests/            test_schema, test_engine, test_sinks, test_benchmark
-benchmarks/bench_sinks.py   throughput + peak-RSS benchmark (not in the default suite)
+benchmarks/
+  bench_sinks.py       sink throughput + peak-RSS (not in the default suite)
+  bench_generators.py  per-row vs vectorized generator draw
 .github/workflows/   ci.yml (PRs), release.yml (push to main)
 CONTRIBUTING.md   the full branching + release policy
 ```
@@ -52,16 +54,30 @@ CONTRIBUTING.md   the full branching + release policy
 - **The generator registry is the extension point.** `@register("type")` maps a
   `type` string to a `BaseGenerator` subclass; `build_generator` instantiates it.
   `generate(row)` receives the partially-built row (so `reference` can read earlier
-  fields).
+  fields) and is all a new generator must implement.
+- **The engine generates a column at a time.** `_generate_chunk(n)` asks each
+  generator for a whole column via `generate_column(n, columns)`, then transposes
+  into row dicts. `BaseGenerator.generate_column` defaults to `n` per-row `generate`
+  calls (each handed a partial row rebuilt from `columns`), so a generator that only
+  implements `generate` still works; the numpy/uuid-bound types override it to draw
+  the column in one call. Vectorize only what stays value-identical to the per-row
+  draw — `benchmarks/bench_generators.py` checks exactly that.
+- **The generation chunk is fixed** (`_GENERATION_CHUNK`), deliberately *not* the
+  caller's batch size: output must depend only on the seed, never on how rows are
+  consumed, and peak memory must stay flat as `row_count` grows. `iter_rows()` and
+  `iter_batches(n)` must agree for every `n` — changing this constant changes every
+  template's output.
 - **null_probability must not perturb the RNG stream.** The engine only draws a
-  nullability random when `null_probability > 0`, so adding a nullable field doesn't
-  shift other columns' values.
+  nullability random when `null_probability > 0`, so a field left at the default
+  costs no randomness. Within a chunk the value column is drawn in full and *then*
+  masked, so a nulled cell still consumes its value draw.
 - **Sinks are streaming.** `BaseSink.write(rows, batch_size=500)` chunks an iterator
   through `write_batch` then `finalize`. Parquet/Avro infer schema from the first
   batch (all columns nullable) and import their heavy deps lazily, so `import
   pysynthgen` never pulls in pyarrow/fastavro.
 - **Uniqueness**: `unique` constraints regenerate the whole row up to 100 times, then
-  raise `GenerationError`.
+  raise `GenerationError`. Regeneration is the per-row path (`_generate_once`), run
+  only on rows that actually collide, so the vectorized path stays the common case.
 
 ## Dev environment & commands
 
@@ -73,7 +89,7 @@ uv venv
 uv pip install -e ".[dev]"
 uv run pytest -q                                    # tests
 uv run ruff check .                                 # lint (whole tree, incl .claude/, .github/)
-uv run mypy src/pysynthgen benchmarks/bench_sinks.py # types (strict)
+uv run mypy src/pysynthgen benchmarks/          # types (strict)
 uv run pysynthgen path/to/template.json --rows 5    # exercise the CLI
 ```
 
@@ -96,7 +112,10 @@ Python 3.10–3.14.
    `type: Literal["x"]`, its params, and validators; add it to the `FieldSpec` union.
 2. `__init__.py`: export the new model.
 3. `generators.py`: add a `@register("x")` `BaseGenerator` subclass implementing
-   `generate(row)`; draw only from `self.rng`.
+   `generate(row)`; draw only from `self.rng`. If the draw vectorizes, also override
+   `generate_column(n, columns)` to draw the whole column in one numpy call — it must
+   produce the same values the per-row `generate` would for the same seed; add the
+   type to `benchmarks/bench_generators.py`, which asserts that.
 4. Tests: validation cases in `test_schema.py`, behaviour + a determinism check in
    `test_engine.py`.
 5. Update the field table in `README.md`.

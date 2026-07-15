@@ -38,6 +38,9 @@ from pysynthgen.schema import (
 
 # A row under construction: field name -> already-generated value.
 Row = dict[str, Any]
+# A generated column and the map of columns built so far (field name -> values).
+Column = list[Any]
+Columns = dict[str, Column]
 
 
 @dataclass
@@ -59,6 +62,17 @@ class BaseGenerator(ABC):
     @abstractmethod
     def generate(self, row: Row) -> Any:
         """Return this field's value for the current row."""
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        """Return ``n`` values as a column, given the columns built so far.
+
+        The default draws one value per row via :meth:`generate`, each seeing a
+        partially-built row assembled from ``columns`` — so a generator that reads
+        earlier fields keeps working. Generators whose draw vectorizes (numeric,
+        category, uuid, date/time) override this to draw the whole column at once.
+        """
+        keys = list(columns)
+        return [self.generate({k: columns[k][i] for k in keys}) for i in range(n)]
 
 
 # --------------------------------------------------------------------------- #
@@ -103,6 +117,10 @@ class UUIDGenerator(BaseGenerator):
         # (uuid.uuid4() reads os.urandom and would not be).
         return str(uuid.UUID(bytes=self.rng.np_rng.bytes(16), version=4))
 
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        raw = self.rng.np_rng.bytes(16 * n)
+        return [str(uuid.UUID(bytes=raw[i * 16 : i * 16 + 16], version=4)) for i in range(n)]
+
 
 @register("date")
 class DateGenerator(BaseGenerator):
@@ -113,6 +131,12 @@ class DateGenerator(BaseGenerator):
         offset = int(self.rng.np_rng.integers(0, span + 1))
         return self.spec.start + timedelta(days=offset)
 
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        span = (self.spec.end - self.spec.start).days
+        start = self.spec.start
+        offsets = self.rng.np_rng.integers(0, span + 1, size=n).tolist()
+        return [start + timedelta(days=o) for o in offsets]
+
 
 @register("datetime")
 class DatetimeGenerator(BaseGenerator):
@@ -122,6 +146,12 @@ class DatetimeGenerator(BaseGenerator):
         span = int((self.spec.end - self.spec.start).total_seconds())
         offset = int(self.rng.np_rng.integers(0, span + 1))
         return self.spec.start + timedelta(seconds=offset)
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        span = int((self.spec.end - self.spec.start).total_seconds())
+        start = self.spec.start
+        offsets = self.rng.np_rng.integers(0, span + 1, size=n).tolist()
+        return [start + timedelta(seconds=o) for o in offsets]
 
 
 @register("int")
@@ -141,6 +171,20 @@ class IntGenerator(BaseGenerator):
             value = min(value, s.max)
         return value
 
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        s = self.spec
+        rng = self.rng.np_rng
+        if s.distribution == "uniform":
+            assert s.min is not None and s.max is not None
+            return list(rng.integers(s.min, s.max + 1, size=n).tolist())
+        assert s.mean is not None and s.stddev is not None
+        arr = np.round(rng.normal(s.mean, s.stddev, size=n))
+        if s.min is not None:
+            arr = np.maximum(arr, s.min)
+        if s.max is not None:
+            arr = np.minimum(arr, s.max)
+        return [int(v) for v in arr.tolist()]
+
 
 @register("float")
 class FloatGenerator(BaseGenerator):
@@ -159,6 +203,20 @@ class FloatGenerator(BaseGenerator):
             value = min(value, s.max)
         return value
 
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        s = self.spec
+        rng = self.rng.np_rng
+        if s.distribution == "uniform":
+            assert s.min is not None and s.max is not None
+            return list(rng.uniform(s.min, s.max, size=n).tolist())
+        assert s.mean is not None and s.stddev is not None
+        arr = rng.normal(s.mean, s.stddev, size=n)
+        if s.min is not None:
+            arr = np.maximum(arr, s.min)
+        if s.max is not None:
+            arr = np.minimum(arr, s.max)
+        return list(arr.tolist())
+
 
 @register("category")
 class CategoryGenerator(BaseGenerator):
@@ -167,6 +225,11 @@ class CategoryGenerator(BaseGenerator):
     def generate(self, row: Row) -> str:
         idx = int(self.rng.np_rng.choice(len(self.spec.values), p=self.spec.weights))
         return self.spec.values[idx]
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        values = self.spec.values
+        idx = self.rng.np_rng.choice(len(values), size=n, p=self.spec.weights)
+        return [values[i] for i in idx.tolist()]
 
 
 @register("faker")
@@ -252,3 +315,7 @@ class ReferenceGenerator(BaseGenerator):
     def generate(self, row: Row) -> Any:
         # The referenced field is validated to appear earlier, so it is present.
         return row[self.spec.field]
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        # The referenced field is built earlier, so its (null-applied) column is ready.
+        return list(columns[self.spec.field])
