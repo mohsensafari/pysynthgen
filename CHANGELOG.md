@@ -1,6 +1,40 @@
 # CHANGELOG
 
 
+## v0.2.0 (2026-07-15)
+
+### Features
+
+- Add bool, sequence, and decimal field types
+  ([#15](https://github.com/mohsensafari/pysynthgen/pull/15),
+  [`0c0bf7b`](https://github.com/mohsensafari/pysynthgen/commit/0c0bf7b9fa7f3f5574d6c0a9dff179ab82ec2c7f))
+
+Adds three field types that had no expression in the template format:
+
+- bool, with an optional true_probability - sequence, a monotonic auto-increment counter - decimal,
+  exact fixed precision/scale values for money
+
+sequence is the first generator whose value comes from the row's position rather than a draw. That
+  earns BaseGenerator a `positional` flag: the engine carries such fields over when it regenerates a
+  row for a unique constraint, since redrawing a positional value only shuffles it out of order.
+  Sequences therefore stay contiguous, and draw no randomness at all, so adding one cannot change
+  any other column.
+
+decimal caps precision at 18 rather than decimal128's 38 because the draw is float64-backed. Bounds
+  are held as exact Decimal and applied after quantization, so a value can never land outside the
+  declared bounds or overflow the declared precision.
+
+The parquet sink now pins decimal columns to the maximum precision. Arrow infers precision from the
+  values it is shown, so the first batch would otherwise fix a precision too narrow for a larger
+  value arriving in a later batch. The avro sink maps Decimal to a bytes/decimal logical type, and
+  json emits the exact digits as a string rather than lose them to a float.
+
+The template skill's profiler learns to infer all three from a sample; a stored Decimal previously
+  degraded to float, and booleans to a string category. Both skills document the new types.
+
+Closes #6
+
+
 ## v0.1.3 (2026-07-15)
 
 ### Documentation
