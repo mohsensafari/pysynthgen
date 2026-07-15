@@ -121,6 +121,56 @@ def test_int_uniform_requires_min_max() -> None:
         load_and_validate_template(tpl)
 
 
+def test_sequence_step_zero_rejected() -> None:
+    tpl = _valid_template()
+    tpl["fields"] = [{"name": "id", "type": "sequence", "step": 0}]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
+def test_bool_true_probability_out_of_range_rejected() -> None:
+    tpl = _valid_template()
+    tpl["fields"] = [{"name": "b", "type": "bool", "true_probability": 1.5}]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
+def test_decimal_precision_beyond_float64_rejected() -> None:
+    tpl = _valid_template()
+    tpl["fields"] = [
+        {"name": "p", "type": "decimal", "precision": 19, "scale": 2, "min": 0, "max": 1}
+    ]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
+def test_decimal_scale_above_precision_rejected() -> None:
+    tpl = _valid_template()
+    tpl["fields"] = [
+        {"name": "p", "type": "decimal", "precision": 4, "scale": 5, "min": 0, "max": 1}
+    ]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
+def test_decimal_uniform_requires_min_max() -> None:
+    tpl = _valid_template()
+    tpl["fields"] = [{"name": "p", "type": "decimal", "precision": 6, "scale": 2, "min": 0}]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
+def test_decimal_bound_exceeding_precision_rejected() -> None:
+    # precision 5 / scale 2 tops out at 999.99; a max of 5000 would be silently
+    # clamped away, so the template is rejected instead.
+    tpl = _valid_template()
+    tpl["fields"] = [
+        {"name": "p", "type": "decimal", "precision": 5, "scale": 2, "min": 0, "max": 5000}
+    ]
+    with pytest.raises(TemplateError):
+        load_and_validate_template(tpl)
+
+
 def test_date_start_after_end_rejected() -> None:
     tpl = _valid_template()
     tpl["fields"] = [

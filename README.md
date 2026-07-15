@@ -80,10 +80,13 @@ format whose extra is missing raises an error naming the extra to install.
 | `type` | Produces | Key params |
 |--------|----------|------------|
 | `uuid` | UUIDv4 string | — |
+| `bool` | boolean | optional `true_probability` (default 0.5) |
+| `sequence` | auto-increment counter | optional `start` (default 1), `step` (default 1) |
 | `date` | date between bounds | `start`, `end` |
 | `datetime` | datetime between bounds | `start`, `end` |
 | `int` | integer | `distribution` (`uniform`/`normal`), `min`/`max` or `mean`/`stddev` |
 | `float` | float | same as `int` |
+| `decimal` | exact `Decimal` | `precision`, `scale`, plus the same params as `float` |
 | `category` | value from a set | `values`, optional `weights` (sum to 1) |
 | `faker` | Faker output | `provider` (e.g. `email`), optional `max_length` |
 | `regex` | string matching a pattern | `pattern`, optional `max_length` |
@@ -91,6 +94,17 @@ format whose extra is missing raises an error naming the extra to install.
 
 String-producing fields (`faker`, `regex`) accept an optional `max_length` that
 truncates the generated value. For `regex`, truncation may break the pattern match.
+
+Use `decimal` rather than `float` for money: a float cannot represent most decimal
+fractions exactly, and Parquet and Avro both carry a real decimal type that a float
+field cannot reach. `precision` (total digits, max 18 — values are drawn as float64,
+which carries no more) doubles as a hard bound, so no value can overflow the declared
+type. CSV and JSON have no decimal type, so both emit the exact digits as a string.
+
+`sequence` is the usual stand-in for an auto-increment primary key. It is the one
+field that draws no randomness — its value follows from the row's position alone, so
+adding one cannot change any other column, and the values stay contiguous even when a
+`unique` constraint forces rows to be regenerated.
 
 Every field also accepts `null_probability` (0–1): the chance of emitting `null`
 for that field on a given row.

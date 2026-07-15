@@ -99,17 +99,24 @@ class SynthEngine:
             if self._unique_ok(row):
                 self._record_unique(row)
                 return row
-            row = self._generate_once()
+            row = self._generate_once(row)
         raise GenerationError(
             f"could not satisfy unique constraint(s) after {_MAX_UNIQUE_RETRIES} retries; "
             "the value domain is likely too small for row_count"
         )
 
-    def _generate_once(self) -> Row:
-        """Draw a single row one field at a time (the per-row uniqueness fallback)."""
+    def _generate_once(self, previous: Row) -> Row:
+        """Redraw a single row one field at a time (the per-row uniqueness fallback).
+
+        Positional fields are carried over from ``previous`` rather than redrawn:
+        the retry replaces the row at a given position, and a positional value
+        belongs to that position, so redrawing it would only shuffle it.
+        """
         row: Row = {}
         for name, null_p, gen in self._generators:
-            if null_p > 0.0 and self._rng.np_rng.random() < null_p:
+            if gen.positional:
+                row[name] = previous[name]
+            elif null_p > 0.0 and self._rng.np_rng.random() < null_p:
                 row[name] = None
             else:
                 row[name] = gen.generate(row)

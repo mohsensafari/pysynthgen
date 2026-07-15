@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -15,6 +16,7 @@ from pysynthgen.sinks import build_sink, format_from_path
 def _rows(null_field: bool = False) -> list[dict]:
     fields = [
         {"name": "id", "type": "uuid"},
+        {"name": "seq", "type": "sequence"},
         {
             "name": "created_at",
             "type": "datetime",
@@ -24,6 +26,9 @@ def _rows(null_field: bool = False) -> list[dict]:
         {"name": "day", "type": "date", "start": "2024-01-01", "end": "2024-12-31"},
         {"name": "age", "type": "int", "min": 18, "max": 90},
         {"name": "score", "type": "float", "min": 0.0, "max": 1.0},
+        {"name": "price", "type": "decimal", "precision": 10, "scale": 2,
+         "min": 0.0, "max": 5000.0},
+        {"name": "active", "type": "bool", "true_probability": 0.7},
         {"name": "country", "type": "category", "values": ["US", "NL"]},
     ]
     if null_field:
@@ -94,6 +99,55 @@ def test_avro_datetime_is_utc_and_deterministic(tmp_path) -> None:
     assert ts.tzinfo is not None
     # naive engine datetime, interpreted as UTC, must equal the read-back instant
     assert ts == rows[0]["created_at"].replace(tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("fmt", ["parquet", "avro"])
+def test_decimal_roundtrips_exactly(tmp_path, fmt) -> None:
+    # The formats with a real decimal type must give back the identical Decimal —
+    # exactness is the whole reason to use a decimal field over a float.
+    pytest.importorskip({"parquet": "pyarrow", "avro": "fastavro"}[fmt])
+    rows = _rows()
+    sink = build_sink(fmt, tmp_path / f"out.{fmt}")
+    sink.write_batch(rows)
+    path = sink.finalize()
+    back = _read_rows(fmt, path)
+    assert isinstance(back[0]["price"], Decimal)
+    assert [r["price"] for r in back] == [r["price"] for r in rows]
+
+
+def test_parquet_decimal_precision_survives_later_batch(tmp_path) -> None:
+    # Regression: arrow infers a decimal's precision from the values it is shown,
+    # so a first batch of small values would fix a precision too narrow to hold a
+    # larger value arriving in a later batch.
+    pytest.importorskip("pyarrow")
+    sink = build_sink("parquet", tmp_path / "out.parquet")
+    sink.write_batch([{"price": Decimal("1.23")}])
+    sink.write_batch([{"price": Decimal("99999999.99")}])
+    path = sink.finalize()
+    assert [r["price"] for r in _read_rows("parquet", path)] == [
+        Decimal("1.23"),
+        Decimal("99999999.99"),
+    ]
+
+
+def test_json_decimal_is_an_exact_string(tmp_path) -> None:
+    # A JSON number is a float to almost every reader, so decimals go out as
+    # strings carrying the exact digits.
+    sink = build_sink("json", tmp_path / "out.json")
+    sink.write_batch([{"price": Decimal("1.10")}])
+    path = sink.finalize()
+    assert json.loads(open(path).read()) == [{"price": "1.10"}]
+
+
+def test_bool_roundtrips_as_bool(tmp_path) -> None:
+    pytest.importorskip("pyarrow")
+    rows = _rows()
+    sink = build_sink("parquet", tmp_path / "out.parquet")
+    sink.write_batch(rows)
+    path = sink.finalize()
+    back = _read_rows("parquet", path)
+    assert all(isinstance(r["active"], bool) for r in back)
+    assert [r["active"] for r in back] == [r["active"] for r in rows]
 
 
 def test_csv_custom_delimiter_and_quote(tmp_path) -> None:

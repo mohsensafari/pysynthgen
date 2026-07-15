@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from typing import Any
 
 import numpy as np
@@ -25,14 +26,17 @@ from faker import Faker
 from rstr import Rstr
 
 from pysynthgen.schema import (
+    BoolField,
     CategoryField,
     DateField,
     DatetimeField,
+    DecimalField,
     FakerField,
     FloatField,
     IntField,
     ReferenceField,
     RegexField,
+    SequenceField,
     UUIDField,
 )
 
@@ -54,6 +58,12 @@ class RandomBundle:
 
 class BaseGenerator(ABC):
     """Produces the value for one field, given the row built so far."""
+
+    #: True when the value is a function of the row's position rather than of a
+    #: random draw. The engine preserves such fields when it regenerates a row to
+    #: satisfy a ``unique`` constraint: redrawing a random value is meaningless to
+    #: the row, but a positional value belongs to it and must survive the retry.
+    positional: bool = False
 
     def __init__(self, spec: Any, rng: RandomBundle) -> None:
         self.spec = spec
@@ -120,6 +130,46 @@ class UUIDGenerator(BaseGenerator):
     def generate_column(self, n: int, columns: Columns) -> Column:
         raw = self.rng.np_rng.bytes(16 * n)
         return [str(uuid.UUID(bytes=raw[i * 16 : i * 16 + 16], version=4)) for i in range(n)]
+
+
+@register("bool")
+class BoolGenerator(BaseGenerator):
+    spec: BoolField
+
+    def generate(self, row: Row) -> bool:
+        return bool(self.rng.np_rng.random() < self.spec.true_probability)
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        draws = self.rng.np_rng.random(n) < self.spec.true_probability
+        return [bool(v) for v in draws.tolist()]
+
+
+@register("sequence")
+class SequenceGenerator(BaseGenerator):
+    """Counts rows rather than drawing them; see :class:`SequenceField`.
+
+    The counter lives on the generator, which the engine builds once per
+    :class:`~pysynthgen.engine.SynthEngine` — so it advances across chunks exactly
+    as the shared RNG stream does, and never touches that stream.
+    """
+
+    spec: SequenceField
+    positional = True
+
+    def __init__(self, spec: Any, rng: RandomBundle) -> None:
+        super().__init__(spec, rng)
+        self._emitted = 0
+
+    def generate(self, row: Row) -> int:
+        value = self.spec.start + self.spec.step * self._emitted
+        self._emitted += 1
+        return value
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        start, step = self.spec.start, self.spec.step
+        first = self._emitted
+        self._emitted += n
+        return [start + step * i for i in range(first, first + n)]
 
 
 @register("date")
@@ -216,6 +266,48 @@ class FloatGenerator(BaseGenerator):
         if s.max is not None:
             arr = np.minimum(arr, s.max)
         return list(arr.tolist())
+
+
+@register("decimal")
+class DecimalGenerator(BaseGenerator):
+    """Draws like ``float``, then snaps the value onto the declared decimal grid.
+
+    Rounding happens once, at the end: the draw is float64, so clamping in float
+    space and *then* quantizing could land a value a quantum outside the declared
+    bounds. Bounds are therefore held as exact ``Decimal`` and applied after
+    quantization, which also guarantees no value can exceed ``precision``.
+    """
+
+    spec: DecimalField
+
+    def __init__(self, spec: Any, rng: RandomBundle) -> None:
+        super().__init__(spec, rng)
+        self._quantum = Decimal(1).scaleb(-spec.scale)
+        limit: Decimal = spec.magnitude_limit
+        lo = -limit if spec.min is None else max(Decimal(str(spec.min)), -limit)
+        hi = limit if spec.max is None else min(Decimal(str(spec.max)), limit)
+        # Round the bounds *inward* so a clamped value is always on the grid and
+        # still inside the range the template asked for.
+        self._lo: Decimal = lo.quantize(self._quantum, rounding=ROUND_CEILING)
+        self._hi: Decimal = hi.quantize(self._quantum, rounding=ROUND_FLOOR)
+
+    def _snap(self, value: float) -> Decimal:
+        quantized = Decimal(str(value)).quantize(self._quantum, rounding=ROUND_HALF_EVEN)
+        return min(max(quantized, self._lo), self._hi)
+
+    def _draw(self, size: int | None) -> Any:
+        s = self.spec
+        if s.distribution == "uniform":
+            assert s.min is not None and s.max is not None  # guaranteed by schema
+            return self.rng.np_rng.uniform(s.min, s.max, size=size)
+        assert s.mean is not None and s.stddev is not None
+        return self.rng.np_rng.normal(s.mean, s.stddev, size=size)
+
+    def generate(self, row: Row) -> Decimal:
+        return self._snap(float(self._draw(None)))
+
+    def generate_column(self, n: int, columns: Columns) -> Column:
+        return [self._snap(v) for v in self._draw(n).tolist()]
 
 
 @register("category")

@@ -22,9 +22,15 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+# Widest precision a ``decimal`` field may declare. Values are drawn as float64,
+# which carries ~15-17 significant digits, so a wider precision would promise
+# exactness the draw cannot deliver. (Parquet's decimal128 would allow 38.)
+MAX_DECIMAL_PRECISION = 18
 
 # --------------------------------------------------------------------------- #
 # Field specifications                                                        #
@@ -59,6 +65,34 @@ class _StringFieldBase(_FieldBase):
 
 class UUIDField(_FieldBase):
     type: Literal["uuid"] = "uuid"
+
+
+class BoolField(_FieldBase):
+    type: Literal["bool"] = "bool"
+    true_probability: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="Chance of emitting True."
+    )
+
+
+class SequenceField(_FieldBase):
+    """A monotonic counter, the usual stand-in for an auto-increment primary key.
+
+    Unlike every other field this draws no randomness, so adding one cannot change
+    any other column: its value is a function of the row's position alone. The
+    column is therefore always exactly ``start``, ``start + step``, ... for
+    ``row_count`` rows — a row regenerated to satisfy a ``unique`` constraint keeps
+    the value its position was already given, leaving no gap.
+    """
+
+    type: Literal["sequence"] = "sequence"
+    start: int = Field(default=1, description="Value of the first row.")
+    step: int = Field(default=1, description="Added per row; may be negative.")
+
+    @model_validator(mode="after")
+    def _check_step(self) -> SequenceField:
+        if self.step == 0:
+            raise ValueError(f"sequence field {self.name!r}: step must not be 0")
+        return self
 
 
 class DateField(_FieldBase):
@@ -139,6 +173,68 @@ class FloatField(_FieldBase):
         return self
 
 
+class DecimalField(_FieldBase):
+    """Emits ``decimal.Decimal`` values with a fixed ``precision`` and ``scale``.
+
+    Use this rather than ``float`` for money: a float cannot represent most decimal
+    fractions exactly, and both Parquet and Avro carry a proper decimal type that a
+    float field cannot reach.
+
+    ``precision`` (total significant digits) doubles as a hard bound: every value is
+    clamped to what those digits can hold, so a drawn value can never overflow the
+    declared type. ``distribution`` and its parameters mirror ``float``.
+    """
+
+    type: Literal["decimal"] = "decimal"
+    precision: int = Field(..., ge=1, le=MAX_DECIMAL_PRECISION)
+    scale: int = Field(..., ge=0)
+    distribution: Literal["uniform", "normal"] = "uniform"
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    stddev: float | None = None
+
+    @property
+    def magnitude_limit(self) -> Decimal:
+        """The largest magnitude ``precision``/``scale`` can represent."""
+        return Decimal(10) ** (self.precision - self.scale) - Decimal(1).scaleb(-self.scale)
+
+    @model_validator(mode="after")
+    def _check_params(self) -> DecimalField:
+        if self.scale > self.precision:
+            raise ValueError(
+                f"decimal field {self.name!r}: scale {self.scale} > precision {self.precision}"
+            )
+        if self.distribution == "uniform":
+            if self.min is None or self.max is None:
+                raise ValueError(f"decimal field {self.name!r}: uniform requires 'min' and 'max'")
+            if self.min > self.max:
+                raise ValueError(f"decimal field {self.name!r}: min {self.min} > max {self.max}")
+        else:  # normal
+            if self.mean is None or self.stddev is None:
+                raise ValueError(
+                    f"decimal field {self.name!r}: normal requires 'mean' and 'stddev'"
+                )
+            if self.stddev <= 0:
+                raise ValueError(f"decimal field {self.name!r}: stddev must be > 0")
+            if self.min is not None and self.max is not None and self.min > self.max:
+                raise ValueError(
+                    f"decimal field {self.name!r}: clamp min {self.min} > max {self.max}"
+                )
+
+        # Bounds outside the declared digits would be silently clamped away; reject
+        # them instead of generating a column that ignores what the template asked for.
+        limit = self.magnitude_limit
+        for bound in ("min", "max"):
+            value = getattr(self, bound)
+            if value is not None and abs(Decimal(str(value))) > limit:
+                raise ValueError(
+                    f"decimal field {self.name!r}: {bound} {value} exceeds what "
+                    f"precision {self.precision}/scale {self.scale} can hold (±{limit})"
+                )
+        return self
+
+
 class CategoryField(_FieldBase):
     type: Literal["category"] = "category"
     values: list[str] = Field(..., min_length=1)
@@ -199,10 +295,13 @@ class ReferenceField(_FieldBase):
 
 FieldSpec = Annotated[
     UUIDField
+    | BoolField
+    | SequenceField
     | DateField
     | DatetimeField
     | IntField
     | FloatField
+    | DecimalField
     | CategoryField
     | FakerField
     | RegexField

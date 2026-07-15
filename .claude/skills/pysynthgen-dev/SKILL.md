@@ -35,7 +35,17 @@ benchmarks/
   bench_generators.py  per-row vs vectorized generator draw
 .github/workflows/   ci.yml (PRs), release.yml (push to main)
 CONTRIBUTING.md   the full branching + release policy
+.claude/skills/
+  pysynthgen-dev/       this skill — developing the library
+  pysynthgen-template/  end-user template authoring (SKILL.md + profile_sample.py)
 ```
+
+**Skills are part of the source tree — update them in the same commit as the code
+they describe, before committing.** Both skills restate the field types, sinks, and
+template format, so a change to any of those leaves them lying until they are edited
+too. `pysynthgen-template/profile_sample.py` is code, not prose: a new field type
+usually means teaching the profiler to infer it, or it will keep emitting the
+workaround the new type was meant to replace. Nothing in CI checks this.
 
 ## Core concepts & invariants
 
@@ -43,8 +53,9 @@ CONTRIBUTING.md   the full branching + release policy
   (`schema.py`). `_FieldBase` gives every field `name` + `null_probability`;
   `_StringFieldBase` adds `max_length` for string-producing fields. `TemplateSpec`
   does cross-field validation (unique names, `reference` targets an *earlier* field,
-  constraints reference known fields). Field types: `uuid`, `date`, `datetime`,
-  `int`, `float`, `category`, `faker`, `regex`, `reference`.
+  constraints reference known fields). Field types: `uuid`, `bool`, `sequence`,
+  `date`, `datetime`, `int`, `float`, `decimal`, `category`, `faker`, `regex`,
+  `reference`.
 - **Determinism is a hard invariant.** A single template `seed` drives everything.
   All randomness MUST come from the `RandomBundle` (`np_rng` numpy Generator, a
   seeded `Faker`, a seeded `rstr.Rstr`). Never use `random`, `os.urandom`, or
@@ -78,6 +89,13 @@ CONTRIBUTING.md   the full branching + release policy
 - **Uniqueness**: `unique` constraints regenerate the whole row up to 100 times, then
   raise `GenerationError`. Regeneration is the per-row path (`_generate_once`), run
   only on rows that actually collide, so the vectorized path stays the common case.
+- **Positional generators**: `BaseGenerator.positional` marks a field whose value
+  comes from the row's *position* rather than a draw (today only `sequence`).
+  `_generate_once` carries those over from the row being replaced instead of
+  redrawing them — redrawing a random value on a unique-retry is harmless, but a
+  positional value belongs to its row, so redrawing it would shuffle the column out
+  of order. A positional generator must also touch no RNG, so adding one cannot
+  change any other column.
 
 ## Dev environment & commands
 
@@ -94,7 +112,9 @@ uv run pysynthgen path/to/template.json --rows 5    # exercise the CLI
 ```
 
 Before pushing, all three (pytest, ruff, mypy) must be clean — CI runs them on
-Python 3.10–3.14.
+Python 3.10–3.14. Before *committing*, also check whether the change makes anything
+in `README.md` or `.claude/skills/` stale, and fix it in the same commit — CI cannot
+catch that, and a skill that misdescribes the code is worse than no skill.
 
 ## Conventions
 
@@ -116,9 +136,19 @@ Python 3.10–3.14.
    `generate_column(n, columns)` to draw the whole column in one numpy call — it must
    produce the same values the per-row `generate` would for the same seed; add the
    type to `benchmarks/bench_generators.py`, which asserts that.
-4. Tests: validation cases in `test_schema.py`, behaviour + a determinism check in
-   `test_engine.py`.
-5. Update the field table in `README.md`.
+4. If the value is a function of row position rather than a draw, set
+   `positional = True` on the generator (see the invariant above) and test it against
+   a `unique` constraint that actually forces retries.
+5. If it produces a type the sinks have not seen (anything beyond str/int/float/
+   bool/date/datetime), teach each sink to carry it: parquet/avro infer their schema
+   from the first batch's *values*, so a new type usually needs an explicit mapping
+   there, and json/csv need a serialization that doesn't quietly lose it.
+6. Tests: validation cases in `test_schema.py`, behaviour + a determinism check in
+   `test_engine.py`, and a sink round-trip in `test_sinks.py` if step 5 applied.
+7. Update the field table in `README.md`.
+8. Update `.claude/skills/pysynthgen-template/`: the field-type table and its
+   detail section in `SKILL.md`, the Workflow A mapping, the inference heuristics,
+   and `profile_sample.py` so the profiler can infer the new type from a sample.
 
 ### Adding a sink
 
@@ -129,7 +159,9 @@ Python 3.10–3.14.
    the lib is untyped) and to the `dev` extra.
 4. Add parametrized contract tests in `test_sinks.py` (round-trip row count, null
    survival, read-back types).
-5. Update the sinks table in `README.md`.
+5. Update the sinks table in `README.md`, and the format list in the
+   `pysynthgen-template` skill (its description and Workflow B both name the formats
+   a sample can be read from).
 
 ## Branching & release policy
 

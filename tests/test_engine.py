@@ -5,6 +5,7 @@ from __future__ import annotations
 import statistics
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -92,6 +93,183 @@ def test_int_normal_clamped_to_min() -> None:
         }
     )
     assert all(r["age"] >= 18 for r in eng.iter_rows())
+
+
+def test_bool_probability_extremes() -> None:
+    base = {"row_count": 50, "seed": 1}
+    always = _engine({**base, "fields": [{"name": "b", "type": "bool", "true_probability": 1.0}]})
+    never = _engine({**base, "fields": [{"name": "b", "type": "bool", "true_probability": 0.0}]})
+    assert all(r["b"] is True for r in always.iter_rows())
+    assert all(r["b"] is False for r in never.iter_rows())
+
+
+def test_bool_probability_respected() -> None:
+    eng = _engine(
+        {
+            "row_count": 4000,
+            "seed": 1,
+            "fields": [{"name": "b", "type": "bool", "true_probability": 0.75}],
+        }
+    )
+    values = [r["b"] for r in eng.iter_rows()]
+    assert all(isinstance(v, bool) for v in values)
+    assert 0.72 < values.count(True) / len(values) < 0.78
+
+
+def test_sequence_counts_from_one() -> None:
+    eng = _engine({"row_count": 5, "seed": 1, "fields": [{"name": "id", "type": "sequence"}]})
+    assert [r["id"] for r in eng.iter_rows()] == [1, 2, 3, 4, 5]
+
+
+def test_sequence_start_and_step() -> None:
+    eng = _engine(
+        {
+            "row_count": 4,
+            "seed": 1,
+            "fields": [{"name": "id", "type": "sequence", "start": 100, "step": 5}],
+        }
+    )
+    assert [r["id"] for r in eng.iter_rows()] == [100, 105, 110, 115]
+
+
+def test_sequence_negative_step() -> None:
+    eng = _engine(
+        {
+            "row_count": 3,
+            "seed": 1,
+            "fields": [{"name": "id", "type": "sequence", "start": 0, "step": -2}],
+        }
+    )
+    assert [r["id"] for r in eng.iter_rows()] == [0, -2, -4]
+
+
+def test_sequence_spans_generation_chunks() -> None:
+    # More rows than the engine's internal chunk, so the counter must survive
+    # across chunks rather than restart at each one.
+    from pysynthgen.engine import _GENERATION_CHUNK
+
+    n = _GENERATION_CHUNK * 2 + 7
+    eng = _engine({"row_count": n, "seed": 1, "fields": [{"name": "id", "type": "sequence"}]})
+    assert [r["id"] for r in eng.iter_rows()] == list(range(1, n + 1))
+
+
+@pytest.mark.parametrize("batch_size", [1, 7, 500, 1024, 4096])
+def test_sequence_identical_across_batch_sizes(batch_size: int) -> None:
+    # Output must depend only on the seed, never on how rows are consumed.
+    tpl = {
+        "row_count": 3000,
+        "seed": 1,
+        "fields": [{"name": "id", "type": "sequence"}, {"name": "n", "type": "int",
+                                                         "min": 0, "max": 100}],
+    }
+    expected = list(_engine(tpl).iter_rows())
+    batched = [row for batch in _engine(tpl).iter_batches(batch_size) for row in batch]
+    assert batched == expected
+
+
+def test_sequence_draws_no_randomness() -> None:
+    # A sequence field must not perturb the shared RNG stream, so adding one
+    # cannot change any other column.
+    base = {"row_count": 100, "seed": 5}
+    plain = _engine({**base, "fields": [{"name": "n", "type": "int", "min": 0, "max": 10_000}]})
+    with_seq = _engine(
+        {
+            **base,
+            "fields": [
+                {"name": "id", "type": "sequence"},
+                {"name": "n", "type": "int", "min": 0, "max": 10_000},
+            ],
+        }
+    )
+    assert [r["n"] for r in with_seq.iter_rows()] == [r["n"] for r in plain.iter_rows()]
+
+
+def test_sequence_unaffected_by_unique_retries() -> None:
+    # A row regenerated to satisfy a unique constraint keeps the sequence value its
+    # position was already given, so the column stays contiguous. The tiny value
+    # domain relative to row_count guarantees retries actually happen here.
+    eng = _engine(
+        {
+            "row_count": 200,
+            "seed": 1,
+            "fields": [
+                {"name": "id", "type": "sequence"},
+                {"name": "c", "type": "category", "values": [str(i) for i in range(250)]},
+            ],
+            "constraints": [{"type": "unique", "fields": ["c"]}],
+        }
+    )
+    assert [r["id"] for r in eng.iter_rows()] == list(range(1, 201))
+
+
+def test_decimal_type_and_scale() -> None:
+    eng = _engine(
+        {
+            "row_count": 200,
+            "seed": 1,
+            "fields": [
+                {"name": "p", "type": "decimal", "precision": 8, "scale": 2,
+                 "min": 0.0, "max": 100.0}
+            ],
+        }
+    )
+    for row in eng.iter_rows():
+        assert isinstance(row["p"], Decimal)
+        assert -row["p"].as_tuple().exponent == 2
+        assert Decimal("0.00") <= row["p"] <= Decimal("100.00")
+
+
+def test_decimal_scale_zero_is_integral() -> None:
+    eng = _engine(
+        {
+            "row_count": 50,
+            "seed": 1,
+            "fields": [
+                {"name": "p", "type": "decimal", "precision": 5, "scale": 0,
+                 "min": 0.0, "max": 100.0}
+            ],
+        }
+    )
+    for row in eng.iter_rows():
+        assert row["p"] == row["p"].to_integral_value()
+
+
+def test_decimal_normal_never_exceeds_precision() -> None:
+    # An unbounded normal draw will wander far past precision 4 / scale 2 (±99.99);
+    # the generator must clamp so no value can overflow the declared type.
+    eng = _engine(
+        {
+            "row_count": 2000,
+            "seed": 1,
+            "fields": [
+                {
+                    "name": "p",
+                    "type": "decimal",
+                    "precision": 4,
+                    "scale": 2,
+                    "distribution": "normal",
+                    "mean": 0.0,
+                    "stddev": 500.0,
+                }
+            ],
+        }
+    )
+    values = [r["p"] for r in eng.iter_rows()]
+    assert all(abs(v) <= Decimal("99.99") for v in values)
+    # the clamp must actually be biting, or the test proves nothing
+    assert Decimal("99.99") in values
+
+
+def test_decimal_is_reproducible() -> None:
+    tpl = {
+        "row_count": 100,
+        "seed": 11,
+        "fields": [
+            {"name": "p", "type": "decimal", "precision": 10, "scale": 3,
+             "min": -50.0, "max": 50.0}
+        ],
+    }
+    assert list(_engine(tpl).iter_rows()) == list(_engine(tpl).iter_rows())
 
 
 def test_date_within_range() -> None:
