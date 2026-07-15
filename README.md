@@ -68,6 +68,18 @@ for that field on a given row.
 
 - `unique` — the listed field(s) form a unique key across generated rows.
 
+### Generating templates with AI
+
+If you use Claude Code, the bundled skill in
+[`.claude/skills/pysynthgen-template/`](.claude/skills/pysynthgen-template/) writes
+templates for you: describe the dataset in words, or point it at a sample file (CSV,
+JSON, Parquet, Avro) and it infers the schema. It ships a profiler you can also run
+directly:
+
+```bash
+python .claude/skills/pysynthgen-template/profile_sample.py sample.csv --rows 2000
+```
+
 ## Usage
 
 ```python
